@@ -1,0 +1,8 @@
+state/
+__pycache__/
+tests/__pycache__/
+*.cookies
+snapshot-*.html
+snapshot-*.txt
+snapshot-*.json
+diff-*.txt
