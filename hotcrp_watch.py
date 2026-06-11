@@ -54,6 +54,7 @@ class SaveResult:
     snapshot_text: Path
     snapshot_json: Path
     diff_path: Path
+    change_reasons: list[str] = dataclasses.field(default_factory=list)
 
 
 class SafeSession(requests.Session):
@@ -352,26 +353,36 @@ def load_latest(out_dir: Path, target: Target) -> PageSnapshot | None:
     )
 
 
-def snapshots_changed(old: PageSnapshot, new: PageSnapshot) -> bool:
+def snapshot_change_reasons(old: PageSnapshot, new: PageSnapshot) -> list[str]:
     old_artifacts = json.dumps(old.parsed.get("delivered_artifacts", []), sort_keys=True)
     new_artifacts = json.dumps(new.parsed.get("delivered_artifacts", []), sort_keys=True)
     old_blocks = json.dumps(old.parsed.get("visible_blocks", []), sort_keys=True)
     new_blocks = json.dumps(new.parsed.get("visible_blocks", []), sort_keys=True)
     old_scores = json.dumps(old.parsed.get("visible_score_fields", []), sort_keys=True)
     new_scores = json.dumps(new.parsed.get("visible_score_fields", []), sort_keys=True)
-    return (
-        old.parsed.get("raw_text_fingerprint") != new.parsed.get("raw_text_fingerprint")
-        or old_artifacts != new_artifacts
-        or old_blocks != new_blocks
-        or old_scores != new_scores
-    )
+    reasons = []
+    if old.parsed.get("raw_text_fingerprint") != new.parsed.get("raw_text_fingerprint"):
+        reasons.append("visible_text")
+    if old_blocks != new_blocks:
+        reasons.append("visible_blocks")
+    if old_scores != new_scores:
+        reasons.append("visible_score_fields")
+    if old_artifacts != new_artifacts:
+        reasons.append("delivered_artifacts")
+    return reasons
+
+
+def snapshots_changed(old: PageSnapshot, new: PageSnapshot) -> bool:
+    return bool(snapshot_change_reasons(old, new))
 
 
 def save_change_snapshot(out_dir: Path, target: Target, old: PageSnapshot, new: PageSnapshot, stamp: str | None = None) -> SaveResult:
     stamp = stamp or now_stamp()
     directory = paper_dir(out_dir, target)
     directory.mkdir(parents=True, exist_ok=True)
-    changed = snapshots_changed(old, new)
+    change_reasons = snapshot_change_reasons(old, new)
+    changed = bool(change_reasons)
+    new.parsed["change_summary"] = change_reasons
     html_path = directory / f"snapshot-{stamp}.html"
     text_path = directory / f"snapshot-{stamp}.txt"
     json_path = directory / f"snapshot-{stamp}.json"
@@ -390,14 +401,16 @@ def save_change_snapshot(out_dir: Path, target: Target, old: PageSnapshot, new: 
         )
         write_text_secure(diff_path, "\n".join(diff) + "\n")
     write_latest(directory, new)
-    return SaveResult(changed, html_path, text_path, json_path, diff_path)
+    return SaveResult(changed, html_path, text_path, json_path, diff_path, change_reasons)
 
 
 def build_pushplus_payload(token: str, target: Target, result: SaveResult, topic: str | None = None) -> dict:
+    reasons = ", ".join(result.change_reasons) if result.change_reasons else "unknown"
     content = "\n".join(
         [
             f"## HotCRP paper {target.paper_id} changed",
             "",
+            f"- Changes: {reasons}",
             f"- URL: {target.url}",
             f"- Diff: `{result.diff_path}`",
             f"- HTML snapshot: `{result.snapshot_html}`",
@@ -605,6 +618,8 @@ def print_paper_report(target: Target, snapshot: PageSnapshot, changed: bool, di
     print(f"  visible_blocks={len(parsed.get('visible_blocks', []))}")
     print(f"  visible_score_fields={len(parsed.get('visible_score_fields', []))}")
     print(f"  delivered_artifacts={len(parsed.get('delivered_artifacts', []))}")
+    if parsed.get("change_summary"):
+        print(f"  changes={','.join(parsed['change_summary'])}")
     if diff_path:
         print(f"  diff={diff_path}")
     for item in parsed.get("visible_score_fields", [])[:5]:

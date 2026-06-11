@@ -153,6 +153,30 @@ class SnapshotTest(unittest.TestCase):
 
         self.assertFalse(hotcrp_watch.snapshots_changed(old, new))
 
+    def test_same_block_count_with_changed_content_counts_as_change(self):
+        old = hotcrp_watch.PageSnapshot(
+            html="<html><body><div>Comment: needs clearer experiments</div></body></html>",
+            text="Comment: needs clearer experiments",
+            parsed=hotcrp_watch.parse_page(
+                "50",
+                "https://iccad2026.hotcrp.com/paper/50",
+                "<html><body><div>Comment: needs clearer experiments</div></body></html>",
+            ),
+        )
+        new = hotcrp_watch.PageSnapshot(
+            html="<html><body><div>Comment: needs stronger baselines</div></body></html>",
+            text="Comment: needs stronger baselines",
+            parsed=hotcrp_watch.parse_page(
+                "50",
+                "https://iccad2026.hotcrp.com/paper/50",
+                "<html><body><div>Comment: needs stronger baselines</div></body></html>",
+            ),
+        )
+
+        self.assertEqual(len(old.parsed["visible_blocks"]), len(new.parsed["visible_blocks"]))
+        self.assertTrue(hotcrp_watch.snapshots_changed(old, new))
+        self.assertIn("visible_text", hotcrp_watch.snapshot_change_reasons(old, new))
+
     def test_save_login_failure_diagnostic_writes_html_and_text(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = hotcrp_watch.save_login_failure_diagnostic(
@@ -233,6 +257,7 @@ class PushPlusTest(unittest.TestCase):
             snapshot_text=Path("state/paper-50/snapshot.txt"),
             snapshot_json=Path("state/paper-50/snapshot.json"),
             diff_path=Path("state/paper-50/diff.txt"),
+            change_reasons=["visible_text"],
         )
 
         payload = hotcrp_watch.build_pushplus_payload("tok", target, result, "topic-a")
@@ -240,6 +265,7 @@ class PushPlusTest(unittest.TestCase):
         self.assertEqual(payload["token"], "tok")
         self.assertEqual(payload["topic"], "topic-a")
         self.assertIn("HotCRP paper 50 changed", payload["title"])
+        self.assertIn("Changes: visible_text", payload["content"])
         self.assertIn("diff.txt", payload["content"])
         self.assertEqual(payload["template"], "markdown")
 
